@@ -29,6 +29,20 @@ headers = {
     "TE": "trailers"
 }
 
+def decomp(data:bytes|str,encoding:str):
+    try:
+        if(encoding=="zstd"):
+            try:
+                dctx = zstd.ZstdDecompressor()
+                decompressed_data = dctx.decompress(data)
+            except zstd.ZstdError: 
+                decompressed_data =data
+        else:
+            decompressed_data = data
+    except Exception as e:
+        print(f"[-] Decompression Error: {e}")
+        decompressed_data=data
+    return decompressed_data.decode('utf-8', errors='ignore')
 
 def fetch_page_data(uid, max_id=None):
     clip_url = "https://www.instagram.com/api/v1/clips/user/"
@@ -42,13 +56,9 @@ def fetch_page_data(uid, max_id=None):
 
     response = requests.post(clip_url, data=form_data, headers=headers)
     content_encoding = response.headers.get('Content-Encoding')
+    decompressed_data=decomp(response.content,content_encoding)
 
-    if content_encoding == "zstd":
-        decompressed_data = dctx.decompress(response.content)
-    else:
-        decompressed_data = response.content
-
-    data = json.loads(decompressed_data.decode('utf-8', errors='ignore'))
+    data = json.loads(decompressed_data)
     items = data.get("items")
     paging_info = data.get('paging_info')
     max_id = paging_info.get('max_id')
@@ -97,11 +107,9 @@ def get_user_reels(username, page_no):
         response = requests.get(url, headers=headers)
 
         if response.status_code == 200:
-            global dctx
-            dctx = zstd.ZstdDecompressor()
-
-            decompressed_data = dctx.decompress(response.content)
-            data = json.loads(decompressed_data.decode('utf-8', errors='ignore'))
+            content_encoding = response.headers.get('Content-Encoding')
+            decompressed_data=decomp(response.content,content_encoding)
+            data = json.loads(decompressed_data)
             user = data.get('data').get('user')
             
             uid = user.get('id')
@@ -144,7 +152,10 @@ def api_get_reels():
     if "error" in reels_data:
         return jsonify(reels_data), 500
     else:
-        return jsonify(reels_data), 200
+        response=jsonify(reels_data)
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.status_code=200
+        return response
 
 
 if __name__ == "__main__":
