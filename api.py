@@ -1,11 +1,11 @@
-from flask import Flask, request, jsonify
+from typing import Dict, List, Optional, Tuple, Any
+from flask import Flask, request,Response, jsonify
 import json
 import requests
 import zstandard as zstd
 
 
 app = Flask(__name__)
-
 
 headers = {
     "Host": "www.instagram.com",
@@ -29,22 +29,24 @@ headers = {
     "TE": "trailers"
 }
 
-def decomp(data:bytes|str,encoding:str):
+
+def decomp(data: bytes | str, encoding: str) -> str:
     try:
-        if(encoding=="zstd"):
+        if encoding == "zstd":
             try:
                 dctx = zstd.ZstdDecompressor()
                 decompressed_data = dctx.decompress(data)
-            except zstd.ZstdError: 
-                decompressed_data =data
+            except zstd.ZstdError:
+                decompressed_data = data
         else:
             decompressed_data = data
     except Exception as e:
         print(f"[-] Decompression Error: {e}")
-        decompressed_data=data
+        decompressed_data = data
     return decompressed_data.decode('utf-8', errors='ignore')
 
-def fetch_page_data(uid, max_id=None):
+
+def fetch_page_data(uid: str, max_id: Optional[str] = None) -> Tuple[List[Dict[str, str]], bool, Optional[str]]:
     clip_url = "https://www.instagram.com/api/v1/clips/user/"
     form_data = {
         "include_feed_video": "true",
@@ -53,22 +55,22 @@ def fetch_page_data(uid, max_id=None):
     }
     if max_id:
         form_data['max_id'] = max_id
-
+    items=[]
+    more_avail = False
     response = requests.post(clip_url, data=form_data, headers=headers)
-    content_encoding = response.headers.get('Content-Encoding')
-    decompressed_data=decomp(response.content,content_encoding)
+    if(response.status_code==200):
+        content_encoding = response.headers.get('Content-Encoding')
+        decompressed_data = decomp(response.content, content_encoding)
+        data = json.loads(decompressed_data)
+        items = data.get("items", [])
+        paging_info = data.get('paging_info', {})
+        max_id = paging_info.get('max_id')
+        more_avail = paging_info.get('more_available', False)
 
-    data = json.loads(decompressed_data)
-    items = data.get("items")
-    paging_info = data.get('paging_info')
-    max_id = paging_info.get('max_id')
-    more_avail = paging_info.get('more_available')
-
-    return items, more_avail, max_id
+    return (items, more_avail, max_id)
 
 
-
-def get_reels_page(uid, page_no):
+def get_reels_page(uid: str, page_no: int) -> List[Dict[str, str]]:
     count = 1
     max_id = None
     more_avail = True
@@ -76,20 +78,20 @@ def get_reels_page(uid, page_no):
 
     while more_avail and count <= page_no:
         items, more_avail, max_id = fetch_page_data(uid, max_id)
-        
+
         if count == page_no:
             for item in items:
-                media = item.get('media')
-                videos = media.get('video_versions')
-                caption = media.get('caption')
-                caption_text = caption.get('text') if caption else ""
-                user = media.get('user')
-                user_name = user.get('username')
-                profile_pic = user.get('profile_pic_url')
-                video_url = videos[0].get('url')
+                media = item.get('media', {})
+                videos = media.get('video_versions', [])
+                caption = media.get('caption', {})
+                caption_text = caption.get('text', "") if caption else ""
+                user = media.get('user', {})
+                user_name = user.get('username', "")
+                profile_pic = user.get('profile_pic_url', "")
+                video_url = videos[0].get('url', "") if videos else ""
 
                 reels.append({
-                    'id': media.get('code'),
+                    'id': media.get('code', ""),
                     'username': user_name,
                     'caption_text': caption_text,
                     'pfURL': profile_pic,
@@ -100,30 +102,26 @@ def get_reels_page(uid, page_no):
     return reels
 
 
-
-def get_user_reels(username, page_no):
+def get_user_reels(username: str, page_no: int) -> Dict[str, Any]:
     url = f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}"
     try:
         response = requests.get(url, headers=headers)
 
         if response.status_code == 200:
             content_encoding = response.headers.get('Content-Encoding')
-            decompressed_data=decomp(response.content,content_encoding)
+            decompressed_data = decomp(response.content, content_encoding)
             data = json.loads(decompressed_data)
-            user = data.get('data').get('user')
-            
-            uid = user.get('id')
+            user = data.get('data', {}).get('user', {})
 
+            uid = user.get('id', "")
             reels = get_reels_page(uid, page_no)
 
-            
             return {
-                "response": {
                     "username": username,
                     "page_no": page_no,
-                    "pfPhoto": user.get('profile_pic_url_hd'),  
+                    "pfPhoto": user.get('profile_pic_url_hd', ""),
                     "reels": reels
-                }
+                
             }
         else:
             return {"error": f"Request failed with status code {response.status_code}"}
@@ -131,31 +129,20 @@ def get_user_reels(username, page_no):
         return {"error": str(e)}
 
 
-
-@app.route('/get_reels', methods=['get'])
-def api_get_reels():
-    
+@app.route('/get_reels', methods=['GET'])
+def api_get_reels() -> Response:
     username = request.args.get('username')
     page_count = int(request.args.get('page_no', 1))
-    
-    
-    # username = data.get('username')
-    # page_count = data.get('page_no', 1)  
-    
-    
+
     if not username:
-        return jsonify({"error": "Username is required"}), 400
-
-    reels_data = get_user_reels(username, page_count)
-
-    
-    if "error" in reels_data:
-        return jsonify(reels_data), 500
-    else:
-        response=jsonify(reels_data)
-        response.headers.add('Access-Control-Allow-Origin', '*')
-        response.status_code=200
+        response= jsonify({"error": "Username is required"})
+        response.status_code = 400
         return response
+    reels_data = get_user_reels(username, page_count)
+    response = jsonify(reels_data)
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.status_code = 200
+    return response
 
 
 if __name__ == "__main__":
