@@ -3,13 +3,14 @@ from flask import Flask, request,Response, jsonify
 import json
 import requests
 import zstandard as zstd
-
+import fake_useragent
+ua =fake_useragent.FakeUserAgent()
 
 app = Flask(__name__)
 
 headers = {
     "Host": "www.instagram.com",
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:134.0) Gecko/20100101 Firefox/134.0",
+    "User-Agent": ua.random,
     "Accept": "*/*",
     "Accept-Language": "en-US,en;q=0.5",
     "Accept-Encoding": "zstd",
@@ -120,29 +121,39 @@ def get_user_reels(username: str, page_no: int) -> Dict[str, Any]:
                     "username": username,
                     "page_no": page_no,
                     "pfPhoto": user.get('profile_pic_url_hd', ""),
-                    "reels": reels
-                
-            }
+                    "reels": reels     
+                    }
         else:
             return {"error": f"Request failed with status code {response.status_code}"}
     except Exception as e:
         return {"error": str(e)}
 
-
+@app.route('/get_reels', methods=['OPTIONS'])
+def handle_options() -> Response:
+    response = Response()
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Methods', 'GET')  
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With')  
+    response.status_code = 200
+    return response
 @app.route('/get_reels', methods=['GET'])
 def api_get_reels() -> Response:
     username = request.args.get('username')
     page_count = int(request.args.get('page_no', 1))
-
     if not username:
-        response= jsonify({"error": "Username is required"})
+        response = jsonify({"error": "Username is required"})
         response.status_code = 400
+        response.headers.add('Access-Control-Allow-Origin', '*')  
         return response
+
     reels_data = get_user_reels(username, page_count)
     response = jsonify(reels_data)
-    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Origin', '*')  
+    response.headers.add('Access-Control-Allow-Methods', 'GET')  
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type')  
     response.status_code = 200
     return response
+
 
 
 if __name__ == "__main__":
